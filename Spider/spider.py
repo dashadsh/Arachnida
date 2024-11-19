@@ -52,7 +52,7 @@ def check_robots(url: str) -> None:
     user_agent = "*"
     if not rp.can_fetch(user_agent, url):
         print(f"Warning: Scraping is forbidden by robots.txt for {url}")
-        sys.exit(1)
+        # sys.exit(1)
     if DEBUG:
         print(f"[DEBUG] Robots.txt checked for {url}")
         

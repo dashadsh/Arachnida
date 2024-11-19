@@ -1,6 +1,6 @@
 import argparse
 import pathlib
-from PIL import Image
+from PIL import Image, ExifTags
 from PIL.ExifTags import TAGS
 import os
 from datetime import datetime
@@ -9,7 +9,7 @@ import sys
 
 DEBUG = False
 SUPPORTED_FORMATS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp'}
-
+# LIMITED_TAGS = {'MakerNote', 'UserComment'}
 
 # https://docs.python.org/3/library/argparse.html
 # https://docs.python.org/3/library/pathlib.html
@@ -42,28 +42,30 @@ def view_filedata(image_path: pathlib.Path) -> None:
         print(f"Error retrieving attributes for {image_path}: {e}")
 
 
-def view_metadata(image_path: pathlib.Path) -> None:
+def view_metadata(image_path: pathlib.Path, verbose: bool = False) -> None:
     """Displays metadata of the given image."""
-    if DEBUG:
-        print(f"[DEBUG] Reading data for {image_path}")
+    print(f"\nProcessing file: {image_path}")
     view_filedata(image_path)
 
     try:
         with Image.open(image_path) as img:
-            if DEBUG:
+            if verbose:
                 print(f"[DEBUG] Image opened: {image_path}")
-
-            # formats with EXIF metadata
-            exif_data = img._getexif()  # Extract EXIF metadata
-            if exif_data:
-                print(f"Metadata for {image_path}:")
-                for tag_id, value in exif_data.items():
-                    tag = TAGS.get(tag_id, tag_id)  # Map tag ID to tag name
-                    print(f"  {tag}: {value}")
+            
+            # Check if the image format supports EXIF data
+            if img.format.lower() in ['jpeg', 'jpg', 'tiff']:
+                exif_data = img._getexif()  # Extract EXIF metadata
+                if exif_data:
+                    print(f"Metadata for {image_path}:")
+                    for tag_id, value in exif_data.items():
+                        tag = ExifTags.TAGS.get(tag_id, tag_id)  # Map tag ID to tag name
+                        print(f"  {tag}: {value}")
+                else:
+                    print(f"No EXIF metadata found for {image_path}.")
             else:
-                print(f"No metadata found for {image_path}.")
+                print(f"{image_path} does not contain EXIF metadata (format: {img.format})")
     except Exception as e:
-        print(f"Error reading metadata for {image_path}: {e}")
+        raise ImageMetadataError(f"Error reading metadata for {image_path}: {e}")
 
 
 
@@ -86,7 +88,6 @@ def main() -> None:
     validate_images(args.image)
     
     for image in args.image:
-          print(f"\nProcessing file: {image}")
           view_metadata(image)
     
 if __name__ == '__main__':

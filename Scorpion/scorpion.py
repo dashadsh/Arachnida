@@ -8,7 +8,7 @@ import sys
 
 
 DEBUG = False
-SUPPORTED_FORMATS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp'}
+SUPPORTED_FORMATS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp'} # png gif bmp do not support EXIF
 # LIMITED_TAGS = {'MakerNote', 'UserComment'}
 
 # https://docs.python.org/3/library/argparse.html
@@ -53,7 +53,7 @@ def view_metadata(image_path: pathlib.Path, verbose: bool = False) -> None:
                 print(f"[DEBUG] Image opened: {image_path}")
             
             # Check if the image format supports EXIF data
-            if img.format.lower() in ['jpeg', 'jpg', 'tiff']:
+            if img.format.lower() in ['jpeg', 'jpg']:
                 exif_data = img._getexif()  # Extract EXIF metadata
                 if exif_data:
                     print(f"Metadata for {image_path}:")
@@ -65,7 +65,7 @@ def view_metadata(image_path: pathlib.Path, verbose: bool = False) -> None:
             else:
                 print(f"{image_path} does not contain EXIF metadata (format: {img.format})")
     except Exception as e:
-        raise ImageMetadataError(f"Error reading metadata for {image_path}: {e}")
+        print(f"Error reading metadata for {image_path}: {e}")
 
 
 
@@ -86,9 +86,12 @@ def validate_images(image_paths):
 def main() -> None:
     args = parse_args()
     validate_images(args.image)
-    
+
+    print(f"\n{'=' * 80}")
+
     for image in args.image:
           view_metadata(image)
-    
+          print(f"\n{'=' * 80}")
+
 if __name__ == '__main__':
     main()

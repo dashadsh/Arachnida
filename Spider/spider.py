@@ -6,130 +6,165 @@ import os
 import requests
 import sys
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin # to resolve relative path
+from urllib.parse import urljoin
+import re
+import signal
+import urllib.robotparser
+
+DEBUG = False
+
+# https://docs.python.org/3/library/signal.html
+def handle_keyboard_interrupt(signal, frame) -> None:
+    """Handles the keyboard interrupt (Ctrl+C) gracefully."""
+    print("\n[INFO] Scraping interrupted by the user. Exiting...")
+    sys.exit(0)
 
 
-DEBUG = True
+signal.signal(signal.SIGINT, handle_keyboard_interrupt)
 
 # https://docs.python.org/3/library/argparse.html
-# https://docs.python.org/3/howto/argparse.html
-def parse_args():
-    parser = argparse.ArgumentParser(prog='Spider', description='A simple image scraper that downloads images from a given URL.')
-    parser.add_argument('URL', help='The URL to download images from')
+# https://docs.python.org/3/library/pathlib.html
+def parse_args() -> argparse.Namespace:
+    """Parses the command-line arguments."""
+    parser = argparse.ArgumentParser(prog='Spider', description='Image scraper that downloads images from a given URL.')
+    parser.add_argument('URL', help='URL to download images from')
     parser.add_argument('-r', '--recursive', action='store_true', help='Download images recursively')
-    parser.add_argument('-l', '--level', type=int, dest='depth', help='Maximum depth level for recursion', default=5)
-    parser.add_argument('-p', '--path', type=pathlib.Path, help='Directory to save downloaded images', default='./data')
+    parser.add_argument('-l', '--level', type=int, dest='depth', help='Max. depth level for recursion', default=5)
+    parser.add_argument('-p', '--path', type=pathlib.Path, help='Directory to save images', default='./data')
     parser.add_argument('-v', '--verbose', action='store_true', default=False, help='Enable verbose output')
     args = parser.parse_args()
+    
+    if args.verbose:
+        global DEBUG
+        DEBUG = True
+    
     if DEBUG:
-        print("[DEBUG] Parsed arguments:", args)
+        print(f"[DEBUG] Fetched arguments: {args}")
+    
     return args
 
+# https://docs.python.org/3/library/urllib.robotparser.html
+def check_robots(url: str) -> None:
+    """Checks robots.txt file for the URL."""
+    rp = urllib.robotparser.RobotFileParser()
+    rp.set_url(url + "/robots.txt")
+    rp.read()
+    user_agent = "*"
+    if not rp.can_fetch(user_agent, url):
+        print(f"Warning: Scraping is forbidden by robots.txt for {url}")
+        sys.exit(1)
+    if DEBUG:
+        print(f"[DEBUG] Robots.txt checked for {url}")
+        
 
-
-# https://docs.python.org/3/library/os.html
-# https://docs.python.org/3/library/os.path.html#module-os.path
-# https://docs.python.org/3/library/exceptions.html
-def create_directory(path):
+def ensure_directory_exists(path: pathlib.Path) -> pathlib.Path:
+    """Checks if the directory exists, creates it if it doesn't."""
     try:
         if os.path.isfile(path):
             raise ValueError(f"The path '{path}' is a file, not a directory.")
         if not os.path.exists(path):
-            os.makedirs(path)  
-        if DEBUG:
-            print(f"[DEBUG] Created directory: {path}")
+            os.makedirs(path)
         return path
     
     except ValueError as ve:
         print(f"Error: {ve}")
         sys.exit(1)
     except Exception as e:
-        print(f"Error while creating the directory '{path}': {e}") # for uncaght exceptions
+        print(f"Error while creating the directory '{path}': {e}")
         sys.exit(1)
 
 
-
-
-# https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
-# https://www.w3schools.com/python/module_requests.asp
-# https://docs.python.org/3/tutorial/errors.html
-def fetch_page(url):
+def fetch_page_content(url): # what is the return type of this function?  -> Optional[str]:
+    """Fetches the content of the URL."""
     try:
         response = requests.get(url)
         if response.status_code == 200:
-            if DEBUG:
-                print(f"[DEBUG] Successfully fetched: {url}")
-                #print(f"[DEBUG] Page content (first 500 characters):\n{response.text[:500]}")
             return response.text
         else:
             print(f"Error: Failed to fetch: {url} (Status Code: {response.status_code})")
             return None
         
-    # requests.exceptions.RequestException - base class for all exceptions raised by the requests library    
     except requests.exceptions.RequestException as e:
         print(f"Error while fetching the URL '{url}': {e}")
-        return None # we continue
-# probably no exit here bc one page may fail, but we need to fetch more ???????
+        return None
 
 
+# https://docs.python.org/3/library/re.html
+def is_image(url): #  -> Optional[re.Match]:
+    """Checks if the URL corresponds to an image."""
+    return re.search(r'\.(jpg|jpeg|png|gif|bmp)(\?.*)?$', url, re.IGNORECASE)
 
 
-# https://pypi.org/project/beautifulsoup4/
-def parse_img_urls(page, base_url): # add base_url
+# https://docs.python.org/3/library/urllib.parse.html
+def parse_image_urls(page, base_url):
+    """Parses image URLs from the given page."""
     try:
         soup = BeautifulSoup(page, 'html.parser')
-        img_tags = soup.find_all('img') # tag to embed images in a webpage. ResultSet object(like list)
-        if DEBUG:
-            print(f"[DEBUG] Found img tags: {img_tags}")
-            
-        img_urls = [] # avoid duplicates
-        for tag in img_tags:
-            src = tag.get('src')
-            if DEBUG:
-                print(f"[DEBUG] Found image URL: {src}")
-            if not src:
-                continue
-            
-            src = urljoin(base_url, src) # resolve relative path if needed (handles both absolute and relative paths)
-            img_urls.append(src) # add to set
-            
-        if DEBUG:
-            print(f"[DEBUG] Parsed image URLs: {img_urls}")
-            
-        return img_urls # convert set to list just in case
-        
+        img_tags = soup.find_all('img')
+        img_urls = {urljoin(base_url, tag.get('src')) for tag in img_tags if tag.get('src') and is_image(tag.get('src'))}
+        return list(img_urls)
     except Exception as e:
-        print(f"Error while parsing image URLs: {e}")
+        print(f"[ERROR] Error while parsing image URLs: {e}")
         return []
 
-
-# https://docs.python.org/3/library/os.path.html#os.path.basename
-def download_img(img_url, path):
+# https://docs.python.org/3/library/os.html
+def download_image(img_url, folder) -> None:
+    """Downloads the image from the URL and saves it to the specified folder."""
     try:
-        img = requests.get(img_url).content
-        img_name = sanitize_filename(img_url)
-        img_path = os.path.join(path, img_name)
-
+        if not os.path.exists(folder):
+            os.makedirs(folder)
         
+        response = requests.get(img_url, stream=True)
+        if response.status_code == 200:
+            filename = os.path.basename(img_url.split('?')[0])
+            filepath = os.path.join(folder, filename)
+            with open(filepath, 'wb') as img_file:
+                for chunk in response.iter_content(chunk_size=1024):
+                    img_file.write(chunk)
+            if DEBUG:
+                print(f"[DEBUG] Downloaded image: {filepath}")
+        else:
+            print(f"[ERROR] Failed to download image {img_url}, Status Code: {response.status_code}")
+            
     except Exception as e:
         print(f"[ERROR] Unexpected error while downloading {img_url}: {e}")
 
 
-        
-# https://docs.python.org/3/library/sys.html
-if __name__ == "__main__":
+# https://www.crummy.com/software/BeautifulSoup/bs4/doc/
+def scrape_images(url, save_path, recursive, depth, visited=None) -> None:
+    """Recursively scrapes images from the given URL."""
+    if visited is None:
+        visited = set()
+    
+    if url in visited or depth < 0:
+        return
+    
+    visited.add(url)
+    page_content = fetch_page_content(url)
+    if not page_content:
+        return
+
+    img_urls = parse_image_urls(page_content, url)
+    for img_url in img_urls:
+        download_image(img_url, save_path)
+
+    if recursive:
+        soup = BeautifulSoup(page_content, 'html.parser')
+        links = [urljoin(url, a['href']) for a in soup.find_all('a', href=True)]
+        for link in links:
+            scrape_images(link, save_path, recursive, depth - 1, visited)
+
+
+def main() -> None:
     try:
         args = parse_args()
-        path = create_directory(args.path)
-        page = fetch_page(args.URL)
-        img_urls = parse_img_urls(page, args.URL)
-
-
-    
-    except Exception as e: # any uncaught exceptions
+        check_robots(args.URL)
+        path = ensure_directory_exists(args.path)
+        scrape_images(args.URL, path, args.recursive, args.depth)
+        
+    except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)
-        
 
-# https://docs.python.org/3/library/functions.html#open
-# https://pypi.org/project/beautifulsoup4/
+if __name__ == "__main__":
+    main()
